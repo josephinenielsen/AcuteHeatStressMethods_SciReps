@@ -2,8 +2,10 @@
 Public repository for data and analyses associated with the publication "Experimental considerations of acute heat stress assays to quantify coral thermal tolerance" By Nielsen et al 2022
 
 Experimental considerations of acute heat stress assays to quantify coral thermal tolerance
+
 Authors
 JJV Nielsen*1,2,3, G Matthews7, KR Frith2,8, HB Harrison2,4, MR. Marzonie2,3,4, KL Slaughter3,5, DJ Suggett6, LK Bay2
+
 Affiliations 
 1College of Public Health, Medicine, and Veterinary Sciences, James Cook University, Townsville, QLD 4811, Australia
 2Australian Institute of Marine Science, PMB #3, Townsville, MC, QLD 4810, Australia
