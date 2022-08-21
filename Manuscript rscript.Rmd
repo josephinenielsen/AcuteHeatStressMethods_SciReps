@@ -1,0 +1,861 @@
+---
+title: "AcuteHeatMethodsPaper"
+author: "JNielsen"
+date: "28/01/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Introduction 
+
+This Rmarkdown produces the statistical outputs presented in the manuscript "Experimental considerations of acute heat stress assays to quantify coral thermal tolerance" by Nielsen et al 2022. This document follows the layout from the manuscript. 
+
+##Libraries required for these analyses
+```{r Libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(glmmTMB)    # for glmmTMB
+library(sjPlot)     # for outputs and partial plots
+library(car)        # for regression diagnostics
+library(DHARMa)     # for residual diagnostics
+library(effects)    # for partial effects plots
+library(ggeffects)  # for effects plots in ggplot
+library(multcomp)
+library(dplyr)
+library(MASS)
+library(MuMIn)
+library(rstatix)
+library(emmeans)
+library(lmtest)
+library(multcompView)
+library(patchwork)  # for arranging multiple plots
+library(ggplot2)    # for graphing
+library(ggfortify)  # for model diagnostics
+library(gridExtra)
+library(extrafont)  # for setting fonts in ggplot
+loadfonts(device = "win") # needed to apply the fonts
+
+
+# for RDA 
+library(vegan)
+library(GGally)
+library(corrplot)
+library(mvabund)
+library(scales)
+```
+
+# Size analysis 
+
+Here, we examine the effects of fragment size under heat stress. 
+```{r}
+# Load size data for both species, set factors
+Size <- read.csv("Size.csv") %>%
+  mutate(SampleID = as.factor(SampleID),
+         Species = as.factor(Species),
+         ClipID = as.factor(ClipID),
+         RackID = as.factor(RackID),
+         GenotypeID = as.factor(GenotypeID),
+         Treatment = as.factor(Treatment),
+         Tank = as.factor(Tank),
+         Size = as.factor(Size))
+
+Size$TreatSize <- paste(Size$Size, Size$Treatment) # for significant interaction terms later
+Size$TreatSize = as.factor(Size$TreatSize)
+summary(Size)
+head(Size)
+```
+
+## Statistical analysis of fragment size effects in A. tenuis
+
+Split the analysis into dealing with only one species at a time. 
+```{r}
+AtenSize <- Size %>% 
+  filter(Species == "A. tenuis")
+```
+
+
+Chlorophyll content in A. tenuis
+```{r}
+# model
+AtenChla <- glmmTMB(Chla_ug_cm2 ~ Treatment*Size + (1|GenotypeID),
+                    data = AtenSize, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+
+# Diagnostics to determine if models satisfy assumptions
+#Dharma residuals for glmm
+chla.resid <- simulateResiduals(AtenChla, plot = TRUE)
+
+summary(AtenChla)
+
+# effects plots
+plot_model(AtenChla, type = 'eff', terms =c('Treatment', 'Size'))
+plot(allEffects(AtenChla), multiline=TRUE, ci.style='bars')
+
+# R2 performance of model
+performance::r2(AtenChla)
+
+# summary figure
+AtenChla.grid = with(AtenSize, list(Treatment=levels(Treatment),
+                            Size=levels(Size)))
+newdata = emmeans(AtenChla, ~Treatment*Size, at=AtenChla.grid,
+                  offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=emmean, x=Treatment)) +
+  geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL, color=Size),
+                  position=position_dodge(width=0.2)) +
+  scale_y_continuous('Chl-a content') +
+  theme_bw()
+```
+
+
+### Cube-root transform function
+```{r}
+cbrt <- function(x) {
+  sign(x) * abs(x)^(1/3)
+}
+```
+
+Tissue colour change
+```{r}
+hist(AtenSize$ColourChange,breaks=100) # long left tail
+
+AtenCol2 <- glmmTMB(cbrt(ColourChange) ~ Treatment*Size + (1|GenotypeID),
+                    data = AtenSize, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+#Dharma residuals for glmm
+col.resid2 <- simulateResiduals(AtenCol2, plot = TRUE)
+testZeroInflation(col.resid2) # not zero-inflated
+testDispersion(col.resid2) # looks fine, too.
+
+summary(AtenCol2)
+
+# effects plots
+plot_model(AtenCol2, type = 'eff', terms =c('Treatment', 'Size'))
+plot(allEffects(AtenCol2), multiline=TRUE, ci.style='bars')
+
+# R2 performance of model
+performance::r2(AtenCol2)
+
+# post-hoc pairwise comparisons with significant interaction terms
+emmeans(AtenCol2,  pairwise~Treatment|Size,  type='response',
+        at=AtenSize$Size)
+
+emmeans(AtenCol2,  pairwise~Size|Treatment,  type='response',
+        at=AtenSize$Size) # need to run both ways around
+
+# summary figure
+AtenCol2.grid = with(AtenSize, list(Treatment=levels(Treatment),
+                            Size=levels(Size)))
+newdata = emmeans(AtenCol2, ~Treatment*Size, at=AtenCol2.grid,
+                  offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=Treatment)) +
+  geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL, color=Size),
+                  position=position_dodge(width=0.2)) +
+  scale_y_continuous('Colour change') +
+  theme_bw()
+```
+
+Catalase activity 
+```{r}
+hist(AtenSize$CatalaseU,breaks=100) # large right tail 
+# Model could be zero-inflated
+
+# Fitting a gamma distribution with a log link due to nature of data
+
+AtenCat2 <- glmmTMB(CatalaseU ~ Treatment*Size + (1|GenotypeID),
+                    ziformula = ~Treatment, # specifying extra zeros in treatment. 
+                    # zeros more often occur in high treatment
+                    data = AtenSize, 
+                    family = ziGamma(link = "log"), REML = TRUE)
+
+
+#Dharma residuals for glmm
+cat2.resid <- simulateResiduals(AtenCat2, plot = TRUE) # fixed it
+
+summary(AtenCat2)
+
+# R2 performance of model
+performance::r2(AtenCat2)
+```
+
+Protein content
+```{r}
+hist(AtenSize$Protein_ug_cm2,breaks=100) # some right outliers
+
+dat1 <- AtenSize %>% 
+  group_by(Treatment) %>% 
+  identify_outliers(Protein_ug_cm2) %>%
+  filter(is.extreme == "TRUE") # 2 outliers identified
+
+Size1 <- AtenSize %>% filter(!(SampleID %in% dat1$SampleID)) # outliers removed
+
+hist(Size1$Protein_ug_cm2,breaks=100) # still long right tail and likely to be zero-inflated
+
+# fit a zero-inflated model
+AtenProt2 <- glmmTMB(Protein_ug_cm2 ~ Treatment*Size + (1|GenotypeID),
+                    data = Size1,
+                    ziformula = ~Treatment, 
+                    family = ziGamma(link = 'log'), REML = TRUE)
+#Dharma residuals for glmm
+prot.resid2 <- simulateResiduals(AtenProt2, plot = TRUE) # yep, problem fixed.
+
+summary(AtenProt2)
+
+# R2 performance of model
+performance::r2(AtenProt2)
+```
+
+## Prepare PAM data for analysis
+Prepare PAM data for analysis. 
+First have to calculate the Fv/Fm variable from the raw data F and Fm given in the spreadsheet. 
+```{r}
+PAM_Size <- read_csv("./data/PAM_SIZE.csv") %>%
+  mutate(genus_species = paste0(substr(genus, start = 1, stop = 1), "_", species),
+         tank = as.factor(tank),
+         colonyID = as.factor(colonyID),
+         replicate = as.factor(replicate),
+         species = as.factor(species),
+         size = as.factor(size),
+         treatment = as.factor(treatment),
+         collection.depth = as.numeric(collection.depth),
+         Fm = ifelse(Fm <= F, F+1, Fm), # There should not be any Fm values < F
+         FvFm = (Fm - F)/Fm)
+
+# Subset to only A tenuis
+PAM_AtenSize <- PAM_Size %>% 
+  filter(species == "tenuis")
+```
+
+Fv/Fm stats for A. tenuis
+```{r}
+hist(PAM_AtenSize$FvFm,breaks=50) # slight left tail
+
+dat1 <- PAM_AtenSize %>% 
+  group_by(treatment) %>% 
+  identify_outliers(FvFm) %>%
+  filter(is.extreme == "TRUE") # 1 extreme outlier identified
+
+Size1 <- PAM_AtenSize %>% filter(!(sampleID %in% dat1$sampleID)) # extreme outlier removed
+
+hist(Size1$FvFm,breaks=50) # still slight left tail
+
+
+AtenFvFm <- glmmTMB(FvFm ~ treatment*size + (1|colonyID),
+                    data = Size1, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+#Dharma residuals for glmm
+FvFm.resid <- simulateResiduals(AtenFvFm, plot = TRUE) 
+# problem with Levene's test
+testZeroInflation(FvFm.resid) # model NOT zero-inflated. 
+testDispersion(FvFm.resid) # and dispersion looks fine.
+
+# R2 performance of model
+performance::r2(AtenFvFm)
+
+summary(AtenFvFm)
+
+```
+
+
+# Size effect P. dam
+
+```{r}
+PdamSize <- Size %>%
+  filter(Species == "P. damicornis")
+summary(PdamSize)
+```
+
+Chlorophyll a content
+```{r}
+hist(PdamSize$Chla_ug_cm2,breaks=100) 
+
+# model
+PdamChla <- glmmTMB(Chla_ug_cm2 ~ Treatment*Size + (1|GenotypeID),
+                    data = PdamSize, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+
+# Diagnostics to determine if models satisfy assumptions
+#Dharma residuals for glmm
+chla.resid <- simulateResiduals(PdamChla, plot = TRUE)
+
+summary(PdamChla)
+
+# effects plots
+plot_model(PdamChla, type = 'eff', terms =c('Treatment', 'Size'))
+plot(allEffects(PdamChla), multiline=TRUE, ci.style='bars')
+
+# R2 performance of model
+performance::r2(PdamChla) 
+
+# post-hoc pairwise comparisons with significant interaction terms
+emmeans(PdamChla,  pairwise~Treatment|Size,  type='response',
+        at=PdamSize$Size)
+
+emmeans(PdamChla,  pairwise~Size|Treatment,  type='response',
+        at=PdamSize$Size) # need to run both ways around
+
+# summary figure
+PdamChla.grid = with(PdamSize, list(Treatment=levels(Treatment),
+                            Size=levels(Size)))
+newdata = emmeans(PdamChla, ~Treatment*Size, at=PdamChla.grid,
+                  offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=emmean, x=Treatment)) +
+  geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL, color=Size),
+                  position=position_dodge(width=0.2)) +
+  scale_y_continuous('Chl-a content') +
+  theme_bw()
+```
+Tissue colour change
+```{r}
+hist(PdamSize$ColourChange,breaks=100) # long left tail, no obvious outliers
+
+# model
+# Transform on the response. 
+PdamCol2 <- glmmTMB(cbrt(ColourChange) ~ Treatment*Size + (1|GenotypeID),
+                    data = PdamSize, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+
+# Diagnostics to determine if models satisfy assumptions
+#Dharma residuals for glmm
+col.resid2 <- simulateResiduals(PdamCol2, plot = TRUE)
+
+summary(PdamCol2)
+
+# effects plots
+plot_model(PdamCol2, type = 'eff', terms =c('Treatment', 'Size'))
+plot(allEffects(PdamCol2), multiline=TRUE, ci.style='bars')
+
+# R2 performance of model
+performance::r2(PdamCol2) 
+
+# post-hoc pairwise comparisons with significant interaction terms
+emmeans(PdamCol2,  pairwise~Treatment|Size,  type='response',
+        at=PdamSize$Size)
+
+emmeans(PdamCol2,  pairwise~Size|Treatment,  type='response',
+        at=PdamSize$Size) # need to run both ways around
+
+# summary figure
+PdamCol2.grid = with(PdamSize, list(Treatment=levels(Treatment),
+                            Size=levels(Size)))
+newdata = emmeans(PdamCol2, ~Treatment*Size, at=PdamCol2.grid,
+                  offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=Treatment)) +
+  geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL, color=Size),
+                  position=position_dodge(width=0.2)) +
+  scale_y_continuous('Colour change') +
+  theme_bw()
+```
+
+Catalase 
+```{r}
+hist(PdamSize$CatalaseU,breaks=50) # huge outlier 
+
+dat1 <- PdamSize %>% 
+  group_by(Treatment) %>% 
+  identify_outliers(CatalaseU) %>%
+  filter(is.outlier == "TRUE") 
+Size1 <- PdamSize %>% filter(!(SampleID %in% dat1$SampleID))
+hist(Size1$CatalaseU,breaks=50) # could be zero inflated
+
+# Fitting a different family due to nature of data; 
+# no values can fall below zero. 
+# so fitting a gamma distribution with a log link
+# gamma-distribution model
+PdamCat3 <- glmmTMB(CatalaseU ~ Treatment*Size + (1|GenotypeID),
+                    data = Size1, 
+                    ziformula = ~Treatment,
+                    family = ziGamma(link = "log"), REML = TRUE)
+cat.resid3 <- simulateResiduals(PdamCat3, plot = TRUE) # that's great
+testZeroInflation(cat.resid3) # model is no-longer zero-inflated
+testDispersion(cat.resid3) # and dispersion is good. 
+
+summary(PdamCat3)
+
+# R2 performance of model
+performance::r2(PdamCat3) 
+
+# post-hoc pairwise comparisons with significant interaction terms
+emmeans(PdamCat3,  pairwise~Treatment|Size,  type='response',
+        at=PdamSize$Size)
+
+emmeans(PdamCat3,  pairwise~Size|Treatment,  type='response',
+        at=PdamSize$Size) # need to run both ways around
+
+# summary figure
+PdamCat3.grid = with(PdamSize, list(Treatment=levels(Treatment),
+                            Size=levels(Size)))
+newdata = emmeans(PdamCat3, ~Treatment*Size, at=PdamCat3.grid,
+                  offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=Treatment)) +
+  geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL, color=Size),
+                  position=position_dodge(width=0.2)) +
+  scale_y_continuous('Catalase activity (U)') +
+  theme_bw()
+```
+Protein content
+```{r}
+hist(PdamSize$Protein_ug_cm2,breaks=50) # likely to be zero-inflated; no obvious outliers
+
+PdamProt <- glmmTMB(Protein_ug_cm2 ~ Treatment*Size + (1|GenotypeID),
+                    data = PdamSize, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+#Dharma residuals for glmm
+prot.resid <- simulateResiduals(PdamProt, plot = TRUE) 
+# Levene's tests failed.
+testZeroInflation(prot.resid) # model is zero-inflated
+testDispersion(prot.resid) # but dispersion looks fine. 
+
+# fit zero-inflated gamma
+PdamProt2 <- glmmTMB(Protein_ug_cm2 ~ Treatment*Size + (1|GenotypeID),
+                    ziformula = ~Treatment,
+                    data = PdamSize, 
+                    family = ziGamma(link = 'log'), REML = TRUE)
+prot.resid2 <- simulateResiduals(PdamProt2, plot = TRUE)
+testZeroInflation(prot.resid2) # Not zero-inflated 
+testDispersion(prot.resid2) # dispersion is good. 
+
+summary(PdamProt2)
+
+# R2 performance of model
+performance::r2(PdamProt2) 
+
+
+# summary figure
+PdamProt2.grid = with(PdamSize, list(Treatment=levels(Treatment),
+                            Size=levels(Size)))
+newdata = emmeans(PdamProt2, ~Treatment*Size, at=PdamProt2.grid,
+                  offset=0, type='response') %>%
+    as.data.frame
+head(newdata)
+ggplot(newdata, aes(y=response, x=Treatment)) +
+  geom_pointrange(aes(ymin=lower.CL, ymax=upper.CL, color=Size),
+                  position=position_dodge(width=0.2)) +
+  scale_y_continuous('Protein content') +
+  theme_bw()
+```
+Fv/Fm data
+```{r}
+# Subset to only P. damicornis
+PAM_PdamSize <- PAM_Size %>% 
+  filter(species == "damicornis")
+
+hist(PAM_PdamSize$FvFm,breaks=50) #  right outlier; slight left tail
+
+dat1 <- PAM_PdamSize %>% 
+  group_by(treatment) %>% 
+  identify_outliers(FvFm) %>%
+  filter(is.outlier == "TRUE") # 3 outliers identified; all removed.
+
+Size1 <- PAM_PdamSize %>% filter(!(sampleID %in% dat1$sampleID))
+
+
+PdamFvFm <- glmmTMB(FvFm ~ treatment*size + (1|colonyID),
+                    data = Size1, 
+                    family = gaussian(link = 'identity'), REML = TRUE)
+#Dharma residuals for glmm
+fvfm.resid <- simulateResiduals(PdamFvFm, plot = TRUE) 
+# Levene's and KS tests failed.
+testZeroInflation(fvfm.resid) # model is NOT zero-inflated
+testDispersion(fvfm.resid) # and dispersion looks fine. 
+
+# R2 performance of model
+performance::r2(PdamFvFm) 
+
+
+summary(PdamFvFm)
+```
+
+
+
+# Time effect in percent change relative to control
+## Strategy
+Fit all time percent data with a generalised linear mixed effects model, assuming a Gaussian distribution. This will be checked with Dharma residuals. We include colonyID as a random effect to soak up some of the variation at each time point. Time is modeled as categorical as insufficient time points to model continuous. Additionally, trends do not appear linear nor display a constant rate of change over time. 
+
+
+```{r ReadTime}
+Time <- read.csv("./data/TimeComplex.csv")
+
+Time <- Time %>%
+  filter(TimePoint != "Before") %>% # remove the "before" time point which was only used to calculate initial colour of each fragment and is not used in the analyses below. 
+    mutate(Timepoint.num = ifelse(TimePoint == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(TimePoint == "T1", 2, 
+                                       ifelse(TimePoint == "T2", 6,
+                                              ifelse(TimePoint == "T3", 10,
+                                                     ifelse(TimePoint == "T4", 14,
+                                                            ifelse(TimePoint == "T5", 24, 48))))))) %>%
+   mutate(TimePoint = factor(TimePoint, levels =c("T0", "T1", "T2", "T3", "T4", "T5", "T6")))
+summary(Time)
+
+```
+
+# Time stats with generalised linear mixed models
+
+## Protein change
+```{r}
+TimeProt <- Time %>% 
+  dplyr::select(ID, Genotype, TimePoint, Timepoint.num, Prot_percent_change) # subset to only one variable
+
+# Outlier check
+Time1 <- TimeProt %>% 
+  group_by(TimePoint) %>% 
+  identify_outliers(Prot_percent_change) %>%
+  filter(is.outlier == "TRUE") #  4 outliers identified
+  
+Time2 <- TimeProt %>% filter(!(ID %in% Time1$ID)) # outliers removed
+
+modelProt = glmmTMB(Prot_percent_change ~ TimePoint + (1|Genotype), data = Time2) # gaussian family unless specified
+
+ModelProt.resid = simulateResiduals(modelProt, plot = TRUE) # something there isn't great
+
+# so test for zero inflation
+testZeroInflation(ModelProt.resid) # p value =1, not zero inflated.
+# check for dispersion
+testDispersion(ModelProt.resid) # not over/underdispersed either. 
+# So issues likely due to complete lack of protein in last 2 timepoints. 
+
+# partial plot
+ggemmeans(modelProt, ~TimePoint) %>% plot(add.data=TRUE) 
+newdata
+
+# R2 performance of model
+performance::r2(modelProt) # 0.48
+
+# Model outputs
+summary(modelProt)
+
+# post-hoc comparisons with emmeans 
+emmeans(modelProt, ~ TimePoint)%>%
+  pairs()
+
+# graph
+newdata = emmeans(modelProt, ~ TimePoint, type = "response") %>% as.data.frame() %>%
+ mutate(Timepoint.num = ifelse(TimePoint == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(TimePoint == "T1", 2, 
+                                       ifelse(TimePoint == "T2", 6,
+                                              ifelse(TimePoint == "T3", 10,
+                                                     ifelse(TimePoint == "T4", 14,
+                                                            ifelse(TimePoint == "T5", 24, 48))))))) 
+newdata
+ggplot(newdata, aes( y = emmean, x = Timepoint.num))+ 
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL))+
+  geom_point(data = Time2, aes(y=Prot_percent_change))
+
+
+# save the emmeans in a spreadsheet 
+write.csv(newdata, "./Outputs/ProtEmmeans.csv")
+```
+
+### Chlorophyll change 
+```{r}
+TimeChla <- Time %>% 
+  dplyr::select(ID, Genotype, TimePoint, Timepoint.num, Chla_percent_change) 
+
+# Outlier check
+Time3 <- TimeChla %>% 
+  group_by(TimePoint) %>% 
+  identify_outliers(Chla_percent_change) %>%
+  filter(is.outlier == "TRUE") #  2 outliers identified
+  
+Time4 <- TimeChla %>% filter(!(ID %in% Time3$ID)) 
+
+modelChla = glmmTMB(Chla_percent_change ~ TimePoint + (1|Genotype), data = Time4)
+
+ModelChla.resid = simulateResiduals(modelChla, plot = TRUE) 
+
+# R2 performance of model
+performance::r2(modelChla) # 0.34
+
+# partial plot
+ggemmeans(modelChla, ~TimePoint) %>% plot(add.data=TRUE) 
+
+# Model outputs
+summary(modelChla)
+
+# post-hoc comparisons with emmeans 
+emmeans(modelChla, ~ TimePoint)%>%
+  pairs()
+
+# graph
+newdata = emmeans(modelChla, ~ TimePoint, type = "response") %>% as.data.frame() %>%
+ mutate(Timepoint.num = ifelse(TimePoint == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(TimePoint == "T1", 2, 
+                                       ifelse(TimePoint == "T2", 6,
+                                              ifelse(TimePoint == "T3", 10,
+                                                     ifelse(TimePoint == "T4", 14,
+                                                            ifelse(TimePoint == "T5", 24, 48))))))) 
+newdata
+ggplot(newdata, aes( y = emmean, x = Timepoint.num))+ 
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL))+
+  geom_point(data = Time4, aes(y=Chla_percent_change))
+
+# save the emmeans in a spreadsheet 
+write.csv(newdata, "./Outputs/ChlaEmmeans.csv")
+```
+
+### Colour change
+```{r}
+TimeCol <- Time %>% 
+  dplyr::select(ID, Genotype, TimePoint, Timepoint.num, Colour_percent_change) # subset to only one variable
+
+# Outlier check
+Time5 <- TimeCol %>% 
+  group_by(TimePoint) %>% 
+  identify_outliers(Colour_percent_change) %>%
+  filter(is.outlier == "TRUE") #  1 outliers identified
+  
+Time6 <- TimeCol %>% filter(!(ID %in% Time5$ID)) 
+
+modelCol = glmmTMB(Colour_percent_change ~ TimePoint + (1|Genotype), data = Time6) 
+
+ModelCol.resid = simulateResiduals(modelCol, plot = TRUE) 
+
+# R2 performance of model
+performance::r2(modelCol) # 0.858
+
+# partial plot
+ggemmeans(modelCol, ~TimePoint) %>% plot(add.data=TRUE) 
+
+# Model outputs
+summary(modelCol)
+
+# post-hoc comparisons with emmeans 
+emmeans(modelCol, ~ TimePoint)%>%
+  pairs()
+
+# graph
+newdata = emmeans(modelCol, ~ TimePoint, type = "response") %>% as.data.frame() %>%
+ mutate(Timepoint.num = ifelse(TimePoint == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(TimePoint == "T1", 2, 
+                                       ifelse(TimePoint == "T2", 6,
+                                              ifelse(TimePoint == "T3", 10,
+                                                     ifelse(TimePoint == "T4", 14,
+                                                            ifelse(TimePoint == "T5", 24, 48))))))) 
+newdata
+ggplot(newdata, aes( y = emmean, x = Timepoint.num))+ 
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL))+
+  geom_point(data = Time6, aes(y=Colour_percent_change))
+
+# save the emmeans in a spreadsheet 
+write.csv(newdata, "./Outputs/ColEmmeans.csv")
+```
+
+### Fv/Fm
+Just need to load a different spreadsheet here.
+```{r}
+Time_PAM_percent <- read.csv("./data//Time_PAM_Fv_percent.csv")
+                             
+
+TimeFvFm <- Time_PAM_percent %>% 
+  dplyr::select(ID, colonyID, time, percent) 
+
+# Outlier check
+Time7 <- TimeFvFm %>% 
+  group_by(time) %>% 
+  identify_outliers(percent) %>%
+  filter(is.outlier == "TRUE") #  3 outliers identified
+  
+Time8 <- TimeFvFm %>% filter(!(ID %in% Time7$ID)) %>% # outliers removed
+  mutate(Timepoint.num = ifelse(time == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(time == "T1", 2, 
+                                       ifelse(time == "T2", 6,
+                                              ifelse(time == "T3", 10,
+                                                     ifelse(time == "T4", 14,
+                                                            ifelse(time == "T5", 24, 48))))))) %>%
+  mutate(time = factor(time, levels =c("T0", "T1", "T2", "T3", "T4", "T5", "T6")))
+
+# Model
+modelFvFm = glmmTMB(percent ~ time + (1|colonyID), data = Time8) # gaussian family unless specified    
+
+ModelFvFm.resid = simulateResiduals(modelFvFm, plot = TRUE) 
+
+# R2 performance of model
+performance::r2(modelFvFm) # 0.789
+
+# partial plot
+ggemmeans(modelFvFm, ~time) %>% plot(add.data=TRUE) 
+
+# Model outputs
+summary(modelFvFm)
+
+# post-hoc comparisons with emmeans 
+emmeans(modelFvFm, ~ time)%>%
+  pairs()
+
+# graph
+newdata = emmeans(modelFvFm, ~ time, type = "response") %>% as.data.frame() %>%
+ mutate(Timepoint.num = ifelse(time == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(time == "T1", 2, 
+                                       ifelse(time == "T2", 6,
+                                              ifelse(time == "T3", 10,
+                                                     ifelse(time == "T4", 14,
+                                                            ifelse(time == "T5", 24, 48))))))) 
+newdata
+ggplot(newdata, aes( y = emmean, x = Timepoint.num))+ 
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL))+
+  geom_point(data = Time8, aes(y=percent))
+
+# save the emmeans in a spreadsheet 
+write.csv(newdata, "./Outputs/FvFmEmmeans.csv")
+
+```
+### Catalase
+```{r}
+TimeCat <- Time %>% 
+  dplyr::select(ID, Genotype, TimePoint, Timepoint.num, Catalase_percent_change) # subset to only one variable
+
+# Outlier check
+Time9 <- TimeCat %>% 
+  group_by(TimePoint) %>% 
+  identify_outliers(Catalase_percent_change) %>%
+  filter(is.outlier == "TRUE") #  6 outliers identified
+  
+Time10 <- TimeCat %>% filter(!(ID %in% Time9$ID)) 
+
+modelCat = glmmTMB(Catalase_percent_change ~ TimePoint + (1|Genotype), data = Time10) 
+
+ModelCat.resid = simulateResiduals(modelCat, plot = TRUE)  # not great, and I need to try and do something about those
+# so test for zero inflation
+testZeroInflation(ModelCat.resid) # p value =1, not zero inflated.
+# check for dispersion
+testDispersion(ModelCat.resid) # not over/underdispersed either. 
+
+
+# R2 performance of model
+performance::r2(modelCat) # 0.596
+
+# partial plot
+ggemmeans(modelCat, ~TimePoint) %>% plot(add.data=TRUE) 
+
+# Model outputs
+summary(modelCat)
+
+# post-hoc comparisons with emmeans 
+emmeans(modelCat, ~ TimePoint)%>%
+  pairs()
+
+# graph
+newdata = emmeans(modelCat, ~ TimePoint, type = "response") %>% as.data.frame() %>%
+ mutate(Timepoint.num = ifelse(TimePoint == "T0", 0, # this part of the code changes timepoint from factor to numeric
+                                ifelse(TimePoint == "T1", 2, 
+                                       ifelse(TimePoint == "T2", 6,
+                                              ifelse(TimePoint == "T3", 10,
+                                                     ifelse(TimePoint == "T4", 14,
+                                                            ifelse(TimePoint == "T5", 24, 48))))))) 
+newdata
+ggplot(newdata, aes( y = emmean, x = Timepoint.num))+ 
+  geom_pointrange(aes(ymin = lower.CL, ymax = upper.CL))+
+  geom_point(data = Time10, aes(y=Catalase_percent_change))
+
+# save the emmeans in a spreadsheet 
+write.csv(newdata, "./Outputs/CatEmmeans.csv")
+
+```
+
+
+# Assay selection - PCA preparation
+```{r}
+#Import Data
+tenuis = read.csv("./data/TenuisMDS.csv") %>% 
+  mutate(Reef = as.factor(Reef),
+         Species = as.factor(Species),
+         Treatment = as.factor(Treatment))
+tenuis 
+```
+Preparing data for PCA (which turns in to Redundancy Analysis)
+```{r}
+#outliers
+tenuis %>% filter(Reef == "Corbett") %>% arrange(desc(CatalaseU)) # very large catalase outlier in sample 891
+tenuis <- tenuis %>% 
+  filter(SampleID != "891")
+```
+
+Isolate traits in a separate data frame
+```{r}
+physio = c("Chla_ug_cm2", "Colour.Change", "CatalaseU", "Protein_ug_cm2", "FvFm")
+```
+
+Examining the correlations between traits. 
+The larger and more blue dots indicate higher correlation between variables. 
+Here, Colour change and FvFm are highly correlated while colour change is also correlated to chl a content and protein content. FvFm is also correlated with chl a and protein content. 
+```{r}
+tenuis %>% dplyr::select(all_of(physio)) %>% 
+  cor %>% 
+  corrplot(type = "upper", diag = F)
+```
+
+```{r message = FALSE}
+ggpairs(tenuis %>% dplyr::select(all_of(physio)), lower = list(continuous = "smooth"), 
+        diag = list(continuous = "density"),
+        axisLabels = "show")
+```
+
+
+##Redundancy analysis (PCA)
+This is where the correlations between variables above matter. Because these variables are correlated, we need to do a redudancy analysis rather than a PCA. 
+```{r}
+data.rda <- rda(tenuis %>% dplyr::select(all_of(physio)), scale=TRUE)  # based on correlation, pca is an unconstrained redundancy analysis. 
+summary(data.rda, display=NULL)
+```
+With correlation, inertia will simply be the number of variables (species)
+Of the 6 units of variance (inertia), the first (PC1) explains 43% of the original variability in the data
+Collectively PC1 and PC2, explain 63% of the variance. 
+
+```{r}
+screeplot(data.rda)
+abline(a=1,b=0)
+```
+Here 5 variables, so if they were all uncorrelated they would explain 1/6th of the data. In a scaled pca, if an eigenvalue is contributed more than 1 inertia, it is contributing more than its share. SO here you might keep 2. 
+
+```{r}
+scores(data.rda, choices=1:3, display='sites')
+scores(data.rda, choices=1:3, display='species')
+biplot(data.rda, scaling='species')
+biplot(data.rda, scaling='sites')
+```
+
+```{r}
+data.sites.scores <- data.rda %>%
+    scores(display='sites') %>%
+    as.data.frame() %>%
+    bind_cols(tenuis)
+data.species.scores <- data.rda %>%
+    scores(display='species') %>%
+    as.data.frame() %>%
+    mutate(Species=rownames(.))
+
+# re-order treatment levels in data.sites.scores so, ambient, mid, high
+data.sites.scores$Treatment <- factor(data.sites.scores$Treatment, levels = c('Ambient', 'Mid', 'High'))
+
+# Making the probability circle for the plot
+circle.prob <- 0.68
+r <- sqrt(qchisq(circle.prob, df = 2)) * prod(colMeans(data.rda$CA$u[,1:2]^2))^(1/4)
+theta <- c(seq(-pi, pi, length = 50), seq(pi, -pi, length = 50))
+circle <- data.frame(PC1 = r * cos(theta), PC2 = r * sin(theta))
+
+data.species.scores.sub <- data.species.scores %>%
+  mutate(Length=sqrt(PC1^2 + PC2^2)) %>%
+  filter(Length>r)  #if the length of the arrows is greater than the radius of 1 SE, we can remove species names
+hjust <- ifelse(data.species.scores.sub$PC1>0,1,0)
+vjust <- ifelse(data.species.scores.sub$PC2>0,0,1) #These are indicating which quadrant arrows are in to nudge in the right direction
+
+```
+
+
+
+
+#Correlations 
+All correlations were generated using the ggheatmap function in the Figures R script. 
