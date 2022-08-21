@@ -17,7 +17,7 @@ Affiliations
 
 Key words: coral thermal tolerance, acute heat stress, experimental design, cost-benefit analysis
 
-Corresponding author: JJV Nielsen, OrcID 0000-0002-4591-3175 Email:josephine.nielsen@my.jcu.edu.au
+Corresponding author: JJV Nielsen, OrcID 0000-0002-4591-3175 Email: josephine.nielsen@my.jcu.edu.au
 
 Abstract 
 
